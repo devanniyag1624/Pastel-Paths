@@ -21,6 +21,9 @@ export default function App() {
   const gameContainerRef = useRef<HTMLDivElement>(null);
   const gameInstanceRef = useRef<Phaser.Game>(null);
   const [score, setScore] = useState(0);
+  
+  // Mobile Control States
+  const [controls, setControls] = useState({ left: false, right: false, jump: false });
 
   useEffect(() => {
     if (!gameContainerRef.current) return;
@@ -48,6 +51,9 @@ export default function App() {
         mode: Phaser.Scale.RESIZE,
         autoCenter: Phaser.Scale.CENTER_BOTH,
       },
+      input: {
+        activePointers: 3, // Support multi-touch
+      }
     };
 
     // Initialize Game
@@ -57,6 +63,7 @@ export default function App() {
     // Phaser scene functions
     let player: Phaser.Physics.Arcade.Sprite;
     let platforms: Phaser.Physics.Arcade.StaticGroup;
+    let ground: Phaser.Physics.Arcade.Image;
     let cursors: Phaser.Types.Input.Keyboard.CursorKeys;
     let wasdKeys: { [key: string]: Phaser.Input.Keyboard.Key };
     let stars: Phaser.Physics.Arcade.Group;
@@ -66,34 +73,26 @@ export default function App() {
       const graphics = this.make.graphics({ x: 0, y: 0 });
 
       // Create rounded player texture with shadow
-      // Shadow
       graphics.fillStyle(COLORS.PLAYER_SHADOW);
       graphics.fillRoundedRect(0, 4, 48, 48, 16);
-      // Body
       graphics.fillStyle(COLORS.PLAYER);
       graphics.fillRoundedRect(0, 0, 48, 48, 16);
-      // Eyes
       graphics.fillStyle(0xFFFFFF);
       graphics.fillCircle(16, 20, 4);
       graphics.fillCircle(32, 20, 4);
-      
       graphics.generateTexture('playerTexture', 48, 52);
       graphics.clear();
 
       // Create rounded platform texture with shadow
-      // Shadow
       graphics.fillStyle(COLORS.PLATFORM_SHADOW);
       graphics.fillRoundedRect(0, 8, 200, 40, 20);
-      // Top
       graphics.fillStyle(COLORS.PLATFORM);
       graphics.fillRoundedRect(0, 0, 200, 40, 20);
-      
       graphics.generateTexture('platformTexture', 200, 48);
       graphics.clear();
 
-      // Create star texture (rotated square as per mockup)
+      // Create star texture
       graphics.fillStyle(COLORS.STAR);
-      // A diamond shape (rotated square)
       graphics.beginPath();
       graphics.moveTo(16, 0);
       graphics.lineTo(32, 16);
@@ -101,7 +100,6 @@ export default function App() {
       graphics.lineTo(0, 16);
       graphics.closePath();
       graphics.fill();
-      
       graphics.generateTexture('starTexture', 32, 32);
       graphics.clear();
 
@@ -127,21 +125,19 @@ export default function App() {
       particles = particleManager;
       particles.stop();
 
-      // Platforms
-      platforms = this.physics.add.staticGroup();
-      
-      // Ground with theme style
+      // Ground
       const groundHeight = 64;
       const groundGraphics = this.add.graphics();
       groundGraphics.fillStyle(COLORS.PLATFORM_SHADOW);
-      groundGraphics.fillRect(0, 0, width * 2, groundHeight);
+      groundGraphics.fillRect(0, 0, 2000, groundHeight);
       groundGraphics.fillStyle(COLORS.PLATFORM);
-      groundGraphics.fillRect(0, 8, width * 2, groundHeight - 8);
-      groundGraphics.generateTexture('groundTexture', width * 2, groundHeight);
+      groundGraphics.fillRect(0, 8, 2000, groundHeight - 8);
+      groundGraphics.generateTexture('groundTexture', 2000, groundHeight);
       
-      const ground = this.physics.add.staticImage(width / 2, height - groundHeight / 2, 'groundTexture');
+      ground = this.physics.add.staticImage(width / 2, height - groundHeight / 2, 'groundTexture');
       
-      // Floating platforms (styled based on mockup positions)
+      // Platforms
+      platforms = this.physics.add.staticGroup();
       platforms.create(width * 0.25, height * 0.75, 'platformTexture');
       platforms.create(width * 0.65, height * 0.55, 'platformTexture');
       platforms.create(width * 0.85, height * 0.35, 'platformTexture');
@@ -151,13 +147,13 @@ export default function App() {
       player = this.physics.add.sprite(width / 2, height - 150, 'playerTexture');
       player.setBounce(0.1);
       player.setCollideWorldBounds(true);
-      player.body!.setSize(48, 48); // Match body without shadow part if possible, or just standard
+      player.body!.setSize(48, 48);
 
       // Collisions
       this.physics.add.collider(player, ground);
       this.physics.add.collider(player, platforms);
 
-      // Stars (Collectibles)
+      // Stars
       stars = this.physics.add.group({
         key: 'starTexture',
         repeat: 11,
@@ -175,11 +171,7 @@ export default function App() {
       this.physics.add.overlap(player, stars, (p, s) => {
         const star = s as Phaser.Physics.Arcade.Sprite;
         star.disableBody(true, true);
-        
-        // Update score
         setScore(prev => prev + 50);
-        
-        // Visual feedback
         this.tweens.add({
           targets: p,
           scaleX: 1.2,
@@ -193,18 +185,30 @@ export default function App() {
       cursors = this.input.keyboard!.createCursorKeys();
       wasdKeys = this.input.keyboard!.addKeys('W,A,S,D') as any;
 
-      // UI (Removing old Phaser text UI as we are using React HUD)
+      // Handle Resize
+      this.scale.on('resize', (gameSize: Phaser.Structs.Size) => {
+        const { width: newWidth, height: newHeight } = gameSize;
+        ground.setPosition(newWidth / 2, newHeight - groundHeight / 2);
+        // Refresh physics body position
+        (ground.body as Phaser.Physics.Arcade.StaticBody).updateFromGameObject();
+      });
     }
 
     function update(this: Phaser.Scene) {
-      if ((!cursors && !wasdKeys) || !player) return;
+      if (!player) return;
 
       const speed = 250;
       const jumpForce = 500;
 
-      const leftPressed = cursors.left.isDown || wasdKeys.A.isDown;
-      const rightPressed = cursors.right.isDown || wasdKeys.D.isDown;
-      const upPressed = cursors.up.isDown || wasdKeys.W.isDown || cursors.space.isDown;
+      // Access external control state from component scope is tricky via useEffect closure
+      // Instead, we use the component state which is captured in this function if we define it right
+      // But update is called 60 times a sec. 
+      // Better: Store move state in a shared object or use the window object for simplicity in this proto
+      const moveState = (window as any)._gameControls || { left: false, right: false, jump: false };
+
+      const leftPressed = cursors?.left?.isDown || wasdKeys?.A?.isDown || moveState.left;
+      const rightPressed = cursors?.right?.isDown || wasdKeys?.D?.isDown || moveState.right;
+      const upPressed = cursors?.up?.isDown || wasdKeys?.W?.isDown || cursors?.space?.isDown || moveState.jump;
 
       if (leftPressed) {
         player.setVelocityX(-speed);
@@ -221,8 +225,6 @@ export default function App() {
 
       if (upPressed && player.body!.touching.down) {
         player.setVelocityY(-jumpForce);
-        
-        // Jump squash and stretch
         this.tweens.add({
           targets: player,
           scaleX: 0.8,
@@ -238,10 +240,15 @@ export default function App() {
       gameInstanceRef.current = null;
     };
   }, []);
+  
+  // Sync state to window for Phaser to read
+  useEffect(() => {
+    (window as any)._gameControls = controls;
+  }, [controls]);
 
   return (
     <div 
-      className="w-full h-screen overflow-hidden bg-[#020617] relative font-sans text-white select-none"
+      className="w-full h-screen overflow-hidden bg-[#020617] relative font-sans text-white select-none touch-none"
       id="immersive-ui-root"
     >
       {/* Game World Background Decor */}
@@ -256,30 +263,30 @@ export default function App() {
       />
 
       {/* Top HUD Overlay */}
-      <div className="absolute top-0 w-full p-8 flex justify-between items-start z-20 pointer-events-none">
+      <div className="absolute top-0 w-full p-4 md:p-8 flex justify-between items-start z-20 pointer-events-none">
         <div className="flex flex-col gap-1 pointer-events-auto">
-          <div className="bg-slate-900/40 backdrop-blur-xl px-6 py-3 rounded-2xl shadow-[0_0_20px_rgba(58,134,255,0.2)] border border-[#3A86FF]/30">
-            <span className="text-xs uppercase tracking-widest font-bold opacity-50 text-[#3A86FF]">Score</span>
-            <div className="text-2xl font-black text-white">{score.toLocaleString().padStart(6, '0')}</div>
+          <div className="bg-slate-900/40 backdrop-blur-xl px-4 md:px-6 py-2 md:py-3 rounded-2xl shadow-[0_0_20px_rgba(58,134,255,0.2)] border border-[#3A86FF]/30">
+            <span className="text-[10px] md:text-xs uppercase tracking-widest font-bold opacity-50 text-[#3A86FF]">Score</span>
+            <div className="text-xl md:text-2xl font-black text-white">{score.toLocaleString().padStart(6, '0')}</div>
           </div>
         </div>
         
-        <div className="flex gap-4 pointer-events-auto">
-          <div className="bg-slate-900/40 backdrop-blur-xl px-4 py-2 rounded-xl shadow-sm border border-[#3A86FF]/30 flex items-center gap-3">
-            <div className="w-3 h-3 rounded-full bg-[#FF006E] shadow-[0_0_10px_#FF006E] animate-pulse"></div>
-            <span className="text-sm font-semibold opacity-80 italic">World 1-1</span>
+        <div className="flex gap-2 md:gap-4 pointer-events-auto">
+          <div className="bg-slate-900/40 backdrop-blur-xl px-3 md:px-4 py-1.5 md:py-2 rounded-xl shadow-sm border border-[#3A86FF]/30 flex items-center gap-2 md:gap-3">
+            <div className="w-2 md:w-3 h-2 md:h-3 rounded-full bg-[#FF006E] shadow-[0_0_10px_#FF006E] animate-pulse"></div>
+            <span className="text-xs md:text-sm font-semibold opacity-80 italic">World 1-1</span>
           </div>
-          <div className="w-12 h-12 bg-slate-900/40 backdrop-blur-xl rounded-xl flex items-center justify-center border border-[#3A86FF]/30 cursor-pointer hover:bg-[#3A86FF]/20 transition-all group">
+          <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-900/40 backdrop-blur-xl rounded-xl flex items-center justify-center border border-[#3A86FF]/30 cursor-pointer hover:bg-[#3A86FF]/20 transition-all group">
             <div className="flex gap-1.5">
-              <div className="w-1.5 h-5 bg-[#3A86FF] rounded-full group-hover:bg-white transition-colors"></div>
-              <div className="w-1.5 h-5 bg-[#3A86FF] rounded-full group-hover:bg-white transition-colors"></div>
+              <div className="w-1.5 h-4 md:h-5 bg-[#3A86FF] rounded-full group-hover:bg-white transition-colors"></div>
+              <div className="w-1.5 h-4 md:h-5 bg-[#3A86FF] rounded-full group-hover:bg-white transition-colors"></div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Bottom Controls Guide */}
-      <div className="absolute bottom-0 w-full p-12 flex justify-center items-center gap-12 z-20 bg-gradient-to-t from-[#020617] to-transparent pointer-events-none">
+      {/* Desktop Controls Guide (Hidden on small screens) */}
+      <div className="hidden md:flex absolute bottom-0 w-full p-12 justify-center items-center gap-12 z-20 bg-gradient-to-t from-[#020617] to-transparent pointer-events-none">
         <div className="flex items-center gap-4 group">
           <div className="w-12 h-12 bg-slate-900/60 backdrop-blur-sm rounded-xl shadow-lg flex items-center justify-center border border-white/10 border-b-4 border-b-[#3A86FF] font-bold text-lg text-white">A</div>
           <div className="w-12 h-12 bg-slate-900/60 backdrop-blur-sm rounded-xl shadow-lg flex items-center justify-center border border-white/10 border-b-4 border-b-[#3A86FF] font-bold text-lg text-white">D</div>
@@ -289,6 +296,44 @@ export default function App() {
         <div className="flex items-center gap-4">
           <div className="px-8 h-12 bg-slate-900/60 backdrop-blur-sm rounded-xl shadow-lg flex items-center justify-center border border-white/10 border-b-4 border-b-[#FF006E] font-bold text-sm tracking-widest uppercase text-white">Space</div>
           <span className="text-xs uppercase tracking-widest font-bold opacity-40 ml-2 text-[#FF006E]">Jump</span>
+        </div>
+      </div>
+
+      {/* Mobile Touch Controls (Visible only on mobile/touch screens) */}
+      <div className="md:hidden absolute inset-x-0 bottom-0 p-6 flex justify-between items-end z-30 pointer-events-none">
+        {/* DPAD */}
+        <div className="flex gap-4 pointer-events-auto">
+          <button 
+            onMouseDown={() => setControls(c => ({ ...c, left: true }))}
+            onMouseUp={() => setControls(c => ({ ...c, left: false }))}
+            onTouchStart={(e) => { e.preventDefault(); setControls(c => ({ ...c, left: true })); }}
+            onTouchEnd={(e) => { e.preventDefault(); setControls(c => ({ ...c, left: false })); }}
+            className={`w-16 h-16 rounded-2xl flex items-center justify-center text-3xl border-2 transition-all backdrop-blur-md ${controls.left ? 'bg-[#3A86FF] border-white text-white' : 'bg-slate-900/60 border-[#3A86FF]/30 text-[#3A86FF]'}`}
+          >
+            ←
+          </button>
+          <button 
+            onMouseDown={() => setControls(c => ({ ...c, right: true }))}
+            onMouseUp={() => setControls(c => ({ ...c, right: false }))}
+            onTouchStart={(e) => { e.preventDefault(); setControls(c => ({ ...c, right: true })); }}
+            onTouchEnd={(e) => { e.preventDefault(); setControls(c => ({ ...c, right: false })); }}
+            className={`w-16 h-16 rounded-2xl flex items-center justify-center text-3xl border-2 transition-all backdrop-blur-md ${controls.right ? 'bg-[#3A86FF] border-white text-white' : 'bg-slate-900/60 border-[#3A86FF]/30 text-[#3A86FF]'}`}
+          >
+            →
+          </button>
+        </div>
+
+        {/* Jump Button */}
+        <div className="pointer-events-auto">
+          <button 
+            onMouseDown={() => setControls(c => ({ ...c, jump: true }))}
+            onMouseUp={() => setControls(c => ({ ...c, jump: false }))}
+            onTouchStart={(e) => { e.preventDefault(); setControls(c => ({ ...c, jump: true })); }}
+            onTouchEnd={(e) => { e.preventDefault(); setControls(c => ({ ...c, jump: false })); }}
+            className={`w-20 h-20 rounded-full flex items-center justify-center text-xl font-black uppercase tracking-tighter border-4 transition-all backdrop-blur-lg ${controls.jump ? 'bg-[#FF006E] border-white text-white translate-y-1' : 'bg-slate-900/60 border-[#FF006E]/30 text-[#FF006E]'}`}
+          >
+            Jump
+          </button>
         </div>
       </div>
 
